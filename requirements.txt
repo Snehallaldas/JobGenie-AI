@@ -1,0 +1,13 @@
+psycopg2-binary
+fastapi
+uvicorn[standard]
+sqlalchemy
+asyncpg
+pydantic-settings
+python-dotenv
+pdfplumber
+spacy
+sentence-transformers
+chromadb
+mistralai
+python-multipart
