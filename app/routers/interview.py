@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
@@ -8,6 +8,8 @@ from app.database import get_db
 from app.models.interview import InterviewSession
 from app.models.resume import Resume
 from app.models.job import Job
+from app.models.user import User
+from app.services.auth_service import get_current_user
 from app.services.mistral_service import (
     generate_questions,
     evaluate_answer,
@@ -29,23 +31,19 @@ class SubmitAnswerRequest(BaseModel):
 @router.post("/start")
 async def start_interview(
     request: StartInterviewRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """Start an interview session — generates questions from resume + job."""
-
-    # Fetch resume
     resume_result = await db.execute(select(Resume).where(Resume.id == request.resume_id))
     resume = resume_result.scalar_one_or_none()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
-    # Fetch job
     job_result = await db.execute(select(Job).where(Job.id == request.job_id))
     job = job_result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # Generate questions via Mistral
     try:
         questions = generate_questions(
             resume_text=resume.raw_text,
@@ -56,7 +54,6 @@ async def start_interview(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Question generation failed: {str(e)}")
 
-    # Create session
     session = InterviewSession(
         resume_id=request.resume_id,
         job_id=request.job_id,
@@ -86,10 +83,9 @@ async def start_interview(
 @router.post("/answer")
 async def submit_answer(
     request: SubmitAnswerRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    """Submit an answer to a question — evaluates and scores it."""
-
     session_result = await db.execute(
         select(InterviewSession).where(InterviewSession.id == request.session_id)
     )
@@ -106,11 +102,9 @@ async def submit_answer(
 
     question = questions[request.question_index]
 
-    # Fetch job title for context
     job_result = await db.execute(select(Job).where(Job.id == session.job_id))
     job = job_result.scalar_one_or_none()
 
-    # Evaluate answer via Mistral
     try:
         evaluation = evaluate_answer(
             question=question["question"],
@@ -121,7 +115,6 @@ async def submit_answer(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Evaluation failed: {str(e)}")
 
-    # Store answer + evaluation
     answers = list(session.answers or [])
     answers.append({
         "question_index": request.question_index,
@@ -130,8 +123,6 @@ async def submit_answer(
         "evaluation": evaluation
     })
 
-    # Update session
-    from sqlalchemy import update
     await db.execute(
         update(InterviewSession)
         .where(InterviewSession.id == request.session_id)
@@ -146,9 +137,11 @@ async def submit_answer(
     }
 
 @router.post("/complete/{session_id}")
-async def complete_interview(session_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Complete the session and generate the full performance report."""
-
+async def complete_interview(
+    session_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     session_result = await db.execute(
         select(InterviewSession).where(InterviewSession.id == session_id)
     )
@@ -160,11 +153,9 @@ async def complete_interview(session_id: UUID, db: AsyncSession = Depends(get_db
     if not answers:
         raise HTTPException(status_code=400, detail="No answers submitted yet")
 
-    # Calculate average score
     scores = [a["evaluation"].get("overall_score", 0) for a in answers]
     average_score = round(sum(scores) / len(scores), 2)
 
-    # Build performance summary for Mistral
     performance_summary = "\n".join([
         f"Q{a['question_index']+1}: {a['question']}\n"
         f"Score: {a['evaluation'].get('overall_score', 0)}/10\n"
@@ -172,11 +163,9 @@ async def complete_interview(session_id: UUID, db: AsyncSession = Depends(get_db
         for a in answers
     ])
 
-    # Fetch job
     job_result = await db.execute(select(Job).where(Job.id == session.job_id))
     job = job_result.scalar_one_or_none()
 
-    # Generate report via Mistral
     try:
         report = generate_feedback_report({
             "job_title": job.title if job else "Software Engineer",
@@ -187,8 +176,6 @@ async def complete_interview(session_id: UUID, db: AsyncSession = Depends(get_db
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
-    # Save completed session
-    from sqlalchemy import update
     await db.execute(
         update(InterviewSession)
         .where(InterviewSession.id == session_id)
@@ -209,9 +196,11 @@ async def complete_interview(session_id: UUID, db: AsyncSession = Depends(get_db
     }
 
 @router.get("/report/{session_id}")
-async def get_report(session_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Fetch the full report for a completed session."""
-
+async def get_report(
+    session_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     session_result = await db.execute(
         select(InterviewSession).where(InterviewSession.id == session_id)
     )

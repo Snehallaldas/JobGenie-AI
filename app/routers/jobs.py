@@ -8,6 +8,8 @@ import traceback
 from app.database import get_db
 from app.models.job import Job
 from app.models.resume import Resume
+from app.models.user import User
+from app.services.auth_service import get_current_user
 from app.services.embedding_service import (
     store_job_embedding,
     match_resume_to_job,
@@ -36,7 +38,11 @@ class JobResponse(BaseModel):
         from_attributes = True
 
 @router.post("/", response_model=JobResponse)
-async def create_job(job_data: JobCreate, db: AsyncSession = Depends(get_db)):
+async def create_job(
+    job_data: JobCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     job = Job(
         title=job_data.title,
         company=job_data.company,
@@ -57,23 +63,28 @@ async def create_job(job_data: JobCreate, db: AsyncSession = Depends(get_db)):
             "skills": ",".join(job_data.required_skills)
         }
     )
-
     return job
 
 @router.get("/")
-async def list_jobs(db: AsyncSession = Depends(get_db)):
+async def list_jobs(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     result = await db.execute(select(Job))
     jobs = result.scalars().all()
     return jobs
 
 @router.get("/match/{resume_id}")
-async def match_jobs(resume_id: UUID, db: AsyncSession = Depends(get_db)):
+async def match_jobs(
+    resume_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     result = await db.execute(select(Resume).where(Resume.id == resume_id))
     resume = result.scalar_one_or_none()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
-    # Re-embed resume if missing from ChromaDB (handles server restarts)
     existing = resume_collection.get(ids=[str(resume_id)], include=[])
     if not existing["ids"]:
         store_resume_embedding(
@@ -86,7 +97,6 @@ async def match_jobs(resume_id: UUID, db: AsyncSession = Depends(get_db)):
             }
         )
 
-    # Re-embed all jobs missing from ChromaDB
     all_jobs_result = await db.execute(select(Job))
     all_jobs = all_jobs_result.scalars().all()
     for job in all_jobs:
@@ -114,7 +124,8 @@ async def match_jobs(resume_id: UUID, db: AsyncSession = Depends(get_db)):
 async def skill_gap(
     resume_id: UUID,
     job_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     resume_result = await db.execute(select(Resume).where(Resume.id == resume_id))
     resume = resume_result.scalar_one_or_none()
@@ -128,7 +139,6 @@ async def skill_gap(
 
     resume_skills = resume.parsed_data.get("skills", [])
     job_skills = job.required_skills or []
-
     gap = compute_skill_gap(resume_skills, job_skills)
 
     return {

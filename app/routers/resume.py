@@ -1,16 +1,16 @@
-from app.services.embedding_service import store_resume_embedding
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-import shutil, os
+import os
 from uuid import UUID
 from app.database import get_db
 from app.models.resume import Resume
 from app.models.schemas import ResumeUploadResponse
-from app.services.resume_parser import extract_text_from_pdf, parse_resume
-from app.config import get_settings
-from app.services.auth_service import get_current_user
 from app.models.user import User
+from app.services.resume_parser import extract_text_from_pdf, parse_resume
+from app.services.auth_service import get_current_user
+from app.services.embedding_service import store_resume_embedding, resume_collection
+from app.config import get_settings
 
 router = APIRouter()
 settings = get_settings()
@@ -21,33 +21,25 @@ async def upload_resume(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Validate file type
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
 
-    # Validate file size
     contents = await file.read()
     size_mb = len(contents) / (1024 * 1024)
     if size_mb > settings.MAX_FILE_SIZE_MB:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Max size is {settings.MAX_FILE_SIZE_MB}MB"
-        )
+        raise HTTPException(status_code=400, detail=f"File too large. Max size is {settings.MAX_FILE_SIZE_MB}MB")
 
-    # Save file to disk
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     file_path = f"{settings.UPLOAD_DIR}/{file.filename}"
     with open(file_path, "wb") as f:
         f.write(contents)
 
-    # Extract and parse
     try:
         raw_text = extract_text_from_pdf(file_path)
         parsed_data = parse_resume(raw_text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse resume: {str(e)}")
 
-    # Save to database
     resume = Resume(
         filename=file.filename,
         raw_text=raw_text,
@@ -57,34 +49,44 @@ async def upload_resume(
     db.add(resume)
     await db.commit()
     await db.refresh(resume)
-    
-# Store embedding in ChromaDB
-    try:
-        store_resume_embedding(
-            resume_id=str(resume.id),
-            text=raw_text,
-            metadata={
-                "filename": resume.filename,
-                "skills": ",".join(parsed_data.get("skills", [])),
-                "ats_score": str(parsed_data.get("ats_score", 0))
-            }
-        )
-        print(f"Embedding stored for resume {resume.id}")
-    except Exception as e:
-        print(f"Embedding failed: {str(e)}")
-        import traceback
-        traceback.print_exc()
+
+    store_resume_embedding(
+        resume_id=str(resume.id),
+        text=raw_text,
+        metadata={
+            "filename": resume.filename,
+            "skills": ",".join(parsed_data.get("skills", [])),
+            "ats_score": str(parsed_data.get("ats_score", 0))
+        }
+    )
+
     return resume
+
+@router.get("/")
+async def list_resumes(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    result = await db.execute(select(Resume))
+    resumes = result.scalars().all()
+    return resumes
+
+@router.get("/debug/chroma")
+async def debug_chroma(
+    current_user: User = Depends(get_current_user)
+):
+    count = resume_collection.count()
+    all_ids = resume_collection.get(include=[])
+    return {"total_embeddings": count, "stored_ids": all_ids["ids"]}
 
 @router.get("/{resume_id}", response_model=ResumeUploadResponse)
 async def get_resume(
     resume_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     result = await db.execute(select(Resume).where(Resume.id == resume_id))
     resume = result.scalar_one_or_none()
-
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
-
     return resume
