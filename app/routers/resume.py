@@ -71,14 +71,6 @@ async def list_resumes(
     resumes = result.scalars().all()
     return resumes
 
-@router.get("/debug/chroma")
-async def debug_chroma(
-    current_user: User = Depends(get_current_user)
-):
-    count = resume_collection.count()
-    all_ids = resume_collection.get(include=[])
-    return {"total_embeddings": count, "stored_ids": all_ids["ids"]}
-
 @router.get("/{resume_id}", response_model=ResumeUploadResponse)
 async def get_resume(
     resume_id: UUID,
