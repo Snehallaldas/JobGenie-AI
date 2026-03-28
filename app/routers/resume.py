@@ -1,3 +1,4 @@
+from app.services.embedding_service import store_resume_embedding
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -53,7 +54,23 @@ async def upload_resume(
     db.add(resume)
     await db.commit()
     await db.refresh(resume)
-
+    
+# Store embedding in ChromaDB
+    try:
+        store_resume_embedding(
+            resume_id=str(resume.id),
+            text=raw_text,
+            metadata={
+                "filename": resume.filename,
+                "skills": ",".join(parsed_data.get("skills", [])),
+                "ats_score": str(parsed_data.get("ats_score", 0))
+            }
+        )
+        print(f"Embedding stored for resume {resume.id}")
+    except Exception as e:
+        print(f"Embedding failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
     return resume
 
 @router.get("/{resume_id}", response_model=ResumeUploadResponse)
