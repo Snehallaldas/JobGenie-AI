@@ -1,9 +1,39 @@
-from mistralai import Mistral
+import json
+
+import httpx
 from app.config import get_settings
 
 settings = get_settings()
 
-client = Mistral(api_key=settings.MISTRAL_API_KEY)
+MISTRAL_CHAT_URL = "https://api.mistral.ai/v1/chat/completions"
+
+
+def _complete_chat(model: str, prompt: str) -> str:
+    if not settings.MISTRAL_API_KEY:
+        raise RuntimeError("MISTRAL_API_KEY is not configured")
+
+    try:
+        response = httpx.post(
+            MISTRAL_CHAT_URL,
+            headers={
+                "Authorization": f"Bearer {settings.MISTRAL_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        raise RuntimeError(f"Mistral API error {exc.response.status_code}: {detail}") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Mistral API request failed: {exc}") from exc
+
+    return response.json()["choices"][0]["message"]["content"]
 
 def generate_questions(resume_text: str, job_title: str, job_description: str, num_questions: int = 5) -> list[dict]:
     """Generate interview questions based on resume and job description."""
@@ -21,24 +51,19 @@ Generate a mix of:
 - Behavioral questions based on their experience
 - Job-specific questions based on the role
 
-Respond ONLY with a JSON array, no other text:
-[
+Respond ONLY with a JSON object, no other text:
+{{
+  "questions": [
   {{
     "question": "question text here",
     "type": "technical|behavioral|situational",
     "difficulty": "easy|medium|hard",
     "expected_keywords": ["keyword1", "keyword2"]
   }}
-]"""
+  ]
+}}"""
 
-    response = client.chat.complete(
-        model=settings.MISTRAL_LARGE_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"}
-    )
-
-    import json
-    content = response.choices[0].message.content
+    content = _complete_chat(settings.MISTRAL_LARGE_MODEL, prompt)
     # Handle both array and object responses
     parsed = json.loads(content)
     if isinstance(parsed, list):
@@ -72,14 +97,7 @@ Evaluate the answer on these criteria and respond ONLY with JSON:
   "keywords_used": ["keywords from expected that were mentioned"]
 }}"""
 
-    response = client.chat.complete(
-        model=settings.MISTRAL_LARGE_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"}
-    )
-
-    import json
-    content = response.choices[0].message.content
+    content = _complete_chat(settings.MISTRAL_LARGE_MODEL, prompt)
     parsed = json.loads(content)
     return parsed
 
@@ -112,12 +130,5 @@ Generate a comprehensive report and respond ONLY with JSON:
   "next_steps": ["step1", "step2", "step3"]
 }}"""
 
-    response = client.chat.complete(
-        model=settings.MISTRAL_SMALL_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"}
-    )
-
-    import json
-    content = response.choices[0].message.content
+    content = _complete_chat(settings.MISTRAL_SMALL_MODEL, prompt)
     return json.loads(content)

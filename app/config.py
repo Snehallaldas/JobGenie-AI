@@ -4,7 +4,7 @@ from functools import lru_cache
 class Settings(BaseSettings):
     APP_NAME: str = "AI Interview Coach API"
     DEBUG: bool = True
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5432/jobgenie"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5433/jobgenie"
     MISTRAL_API_KEY: str = ""
     MISTRAL_LARGE_MODEL: str = "mistral-large-latest"
     MISTRAL_SMALL_MODEL: str = "mistral-small-latest"

@@ -1,12 +1,18 @@
-from sentence_transformers import SentenceTransformer
 import chromadb
-from chromadb.config import Settings
 from app.config import get_settings
 
 settings = get_settings()
 
 # Load model once at module level — don't reload on every request
-model = SentenceTransformer(settings.EMBEDDING_MODEL)
+model = None
+
+def get_model():
+    global model
+    if model is None:
+        from sentence_transformers import SentenceTransformer
+
+        model = SentenceTransformer(settings.EMBEDDING_MODEL)
+    return model
 
 # Initialize ChromaDB persistent client
 chroma_client = chromadb.PersistentClient(
@@ -26,7 +32,7 @@ job_collection = chroma_client.get_or_create_collection(
 
 def embed_text(text: str) -> list[float]:
     """Convert any text into a vector embedding."""
-    return model.encode(text).tolist()
+    return get_model().encode(text).tolist()
 
 def store_resume_embedding(resume_id: str, text: str, metadata: dict) -> None:
     """Embed and store a resume in ChromaDB."""

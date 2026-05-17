@@ -1,9 +1,16 @@
 import pdfplumber
-import spacy
 import re
 from pathlib import Path
 
-nlp = spacy.load("en_core_web_sm")
+nlp = None
+
+def get_nlp():
+    global nlp
+    if nlp is None:
+        import spacy
+
+        nlp = spacy.load("en_core_web_sm")
+    return nlp
 
 # Common skills keyword list — expand this as needed
 SKILLS_KEYWORDS = [
@@ -80,7 +87,7 @@ def calculate_ats_score(parsed_data: dict) -> float:
 
 def parse_resume(text: str) -> dict:
     """Master function — runs all extraction and returns structured data."""
-    doc = nlp(text)
+    doc = get_nlp()(text)
 
     # Extract named entities for name detection
     name = None
