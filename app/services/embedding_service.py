@@ -1,38 +1,61 @@
 import chromadb
+import httpx
+
 from app.config import get_settings
 
 settings = get_settings()
 
-# Load model once at module level — don't reload on every request
-model = None
+MISTRAL_EMBEDDINGS_URL = "https://api.mistral.ai/v1/embeddings"
 
-def get_model():
-    global model
-    if model is None:
-        from sentence_transformers import SentenceTransformer
 
-        model = SentenceTransformer(settings.EMBEDDING_MODEL)
-    return model
+def _collection_suffix() -> str:
+    return settings.EMBEDDING_MODEL.replace("-", "_").replace(".", "_")
 
-# Initialize ChromaDB persistent client
+
+# Initialize ChromaDB persistent client.
 chroma_client = chromadb.PersistentClient(
     path=settings.CHROMA_PERSIST_DIR
 )
 
-# Collections — one for resumes, one for job descriptions
+# Collections: one for resumes, one for job descriptions.
 resume_collection = chroma_client.get_or_create_collection(
-    name="resumes",
+    name=f"resumes_{_collection_suffix()}",
     metadata={"hnsw:space": "cosine"}
 )
 
 job_collection = chroma_client.get_or_create_collection(
-    name="job_descriptions",
+    name=f"job_descriptions_{_collection_suffix()}",
     metadata={"hnsw:space": "cosine"}
 )
 
+
 def embed_text(text: str) -> list[float]:
     """Convert any text into a vector embedding."""
-    return get_model().encode(text).tolist()
+    if not settings.MISTRAL_API_KEY:
+        raise RuntimeError("MISTRAL_API_KEY is not configured")
+
+    try:
+        response = httpx.post(
+            MISTRAL_EMBEDDINGS_URL,
+            headers={
+                "Authorization": f"Bearer {settings.MISTRAL_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={"model": settings.EMBEDDING_MODEL, "input": text},
+            timeout=60,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        raise RuntimeError(f"Mistral embeddings API error {exc.response.status_code}: {detail}") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Mistral embeddings API request failed: {exc}") from exc
+
+    data = response.json().get("data", [])
+    if not data:
+        raise RuntimeError("Mistral embeddings API returned no embeddings")
+    return data[0]["embedding"]
+
 
 def store_resume_embedding(resume_id: str, text: str, metadata: dict) -> None:
     """Embed and store a resume in ChromaDB."""
@@ -44,6 +67,7 @@ def store_resume_embedding(resume_id: str, text: str, metadata: dict) -> None:
         metadatas=[metadata]
     )
 
+
 def store_job_embedding(job_id: str, text: str, metadata: dict) -> None:
     """Embed and store a job description in ChromaDB."""
     embedding = embed_text(text)
@@ -54,29 +78,26 @@ def store_job_embedding(job_id: str, text: str, metadata: dict) -> None:
         metadatas=[metadata]
     )
 
+
 def match_resume_to_job(resume_id: str, top_k: int = 5) -> list[dict]:
     job_count = job_collection.count()
     if job_count == 0:
         return []
 
-    # Get the resume embedding from ChromaDB
     result = resume_collection.get(
         ids=[resume_id],
         include=["embeddings"]
     )
 
-    # Fix — handle both None and empty numpy array
     embeddings = result.get("embeddings")
     if embeddings is None or len(embeddings) == 0:
         raise ValueError(f"Resume {resume_id} not found in vector store")
 
     resume_embedding = embeddings[0]
 
-    # Convert numpy array to plain Python list
-    if hasattr(resume_embedding, 'tolist'):
+    if hasattr(resume_embedding, "tolist"):
         resume_embedding = resume_embedding.tolist()
 
-    # Query job collection
     matches = job_collection.query(
         query_embeddings=[resume_embedding],
         n_results=min(top_k, job_count),
@@ -86,7 +107,7 @@ def match_resume_to_job(resume_id: str, top_k: int = 5) -> list[dict]:
     results = []
     for i in range(len(matches["ids"][0])):
         distance = matches["distances"][0][i]
-        if hasattr(distance, 'item'):
+        if hasattr(distance, "item"):
             distance = distance.item()
         similarity = round((1 - distance) * 100, 2)
         results.append({
@@ -97,6 +118,7 @@ def match_resume_to_job(resume_id: str, top_k: int = 5) -> list[dict]:
         })
 
     return results
+
 
 def compute_skill_gap(resume_skills: list[str], job_skills: list[str]) -> dict:
     """Compare resume skills against job required skills."""

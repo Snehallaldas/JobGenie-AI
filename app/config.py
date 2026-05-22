@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     MISTRAL_API_KEY: str = ""
     MISTRAL_LARGE_MODEL: str = "mistral-large-latest"
     MISTRAL_SMALL_MODEL: str = "mistral-small-latest"
-    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    EMBEDDING_MODEL: str = "mistral-embed"
     CHROMA_PERSIST_DIR: str = "./chroma_db"
     UPLOAD_DIR: str = "./uploads"
     MAX_FILE_SIZE_MB: int = 10
