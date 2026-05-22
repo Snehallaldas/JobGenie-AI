@@ -6,9 +6,7 @@ from uuid import UUID
 from app.database import get_db
 from app.models.resume import Resume
 from app.models.schemas import ResumeUploadResponse
-from app.models.user import User
 from app.services.resume_parser import extract_text_from_pdf, parse_resume
-from app.services.auth_service import get_current_user
 from app.services.embedding_service import store_resume_embedding, resume_collection
 from app.config import get_settings
 
@@ -18,8 +16,7 @@ settings = get_settings()
 @router.post("/upload", response_model=ResumeUploadResponse)
 async def upload_resume(
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db)
 ):
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
@@ -64,8 +61,7 @@ async def upload_resume(
 
 @router.get("/")
 async def list_resumes(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(select(Resume))
     resumes = result.scalars().all()
@@ -74,8 +70,7 @@ async def list_resumes(
 @router.get("/{resume_id}", response_model=ResumeUploadResponse)
 async def get_resume(
     resume_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(select(Resume).where(Resume.id == resume_id))
     resume = result.scalar_one_or_none()
