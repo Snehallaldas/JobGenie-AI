@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
 from functools import lru_cache
+from typing import List
 
 class Settings(BaseSettings):
     APP_NAME: str = "AI Interview Coach API"
@@ -16,6 +17,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-super-secret-key-change-this-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    CORS_ORIGINS: List[str] = ["*"]
 
     @field_validator("DEBUG", mode="before")
     @classmethod
@@ -24,6 +26,13 @@ class Settings(BaseSettings):
             normalized = value.strip().lower()
             if normalized in {"release", "prod", "production"}:
                 return False
+        return value
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value):
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
     class Config:
