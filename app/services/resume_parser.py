@@ -6,8 +6,38 @@ SKILLS_KEYWORDS = [
     "python", "java", "javascript", "react", "node.js", "fastapi",
     "django", "sql", "postgresql", "mongodb", "docker", "git",
     "machine learning", "deep learning", "nlp", "tensorflow", "pytorch",
-    "aws", "gcp", "azure", "rest api", "html", "css", "typescript"
+    "aws", "gcp", "azure", "rest api", "html", "css", "typescript",
+    "next.js", "express.js", "flask", "spring boot", "c++", "c#",
+    "php", "laravel", "ruby", "rails", "golang", "rust",
+    "kubernetes", "terraform", "jenkins", "github actions", "ci/cd",
+    "mysql", "sqlite", "redis", "elasticsearch", "graphql", "grpc",
+    "linux", "bash", "powershell", "data analysis", "pandas", "numpy",
+    "scikit-learn", "opencv", "llm", "rag", "langchain", "chromadb",
+    "prompt engineering", "tailwind", "bootstrap", "figma", "ui/ux"
 ]
+
+SKILL_ALIASES = {
+    "nodejs": "node.js",
+    "node": "node.js",
+    "reactjs": "react",
+    "nextjs": "next.js",
+    "express": "express.js",
+    "postgres": "postgresql",
+    "mongo": "mongodb",
+    "k8s": "kubernetes",
+    "ml": "machine learning",
+    "ai": "machine learning",
+    "genai": "llm",
+    "generative ai": "llm",
+    "large language models": "llm",
+    "rest": "rest api",
+    "apis": "rest api",
+    "cicd": "ci/cd",
+    "ci cd": "ci/cd",
+    "sklearn": "scikit-learn",
+    "ts": "typescript",
+    "js": "javascript"
+}
 
 # ATS section headers to look for.
 ATS_SECTIONS = [
@@ -62,10 +92,31 @@ def extract_name(text: str) -> str | None:
     return None
 
 
+def normalize_skill(skill: str) -> str:
+    normalized = re.sub(r"\s+", " ", skill.strip().lower())
+    normalized = normalized.replace("node js", "node.js")
+    normalized = normalized.replace("next js", "next.js")
+    normalized = normalized.replace("express js", "express.js")
+    normalized = normalized.replace("restful api", "rest api")
+    return SKILL_ALIASES.get(normalized, normalized)
+
+
 def extract_skills(text: str) -> list[str]:
     text_lower = text.lower()
-    found = [skill for skill in SKILLS_KEYWORDS if skill in text_lower]
-    return list(set(found))
+    found = set()
+
+    for skill in SKILLS_KEYWORDS:
+        normalized_skill = normalize_skill(skill)
+        pattern = r"(?<![a-z0-9+#.])" + re.escape(skill.lower()) + r"(?![a-z0-9+#.])"
+        if re.search(pattern, text_lower):
+            found.add(normalized_skill)
+
+    for alias, canonical in SKILL_ALIASES.items():
+        pattern = r"(?<![a-z0-9+#.])" + re.escape(alias) + r"(?![a-z0-9+#.])"
+        if re.search(pattern, text_lower):
+            found.add(canonical)
+
+    return sorted(found)
 
 
 def extract_sections(text: str) -> dict:
@@ -79,24 +130,29 @@ def extract_sections(text: str) -> dict:
 
 def calculate_ats_score(parsed_data: dict) -> float:
     """
-    Simple ATS score out of 100 based on:
-    - Sections present (40 points)
-    - Skills found (40 points)
-    - Contact info (20 points)
+    ATS score out of 100 based on sections, skills, contact info, and length.
     """
     score = 0.0
 
     sections = parsed_data.get("sections", {})
     section_score = sum(1 for present in sections.values() if present)
-    score += min(section_score * 5, 40)
+    score += min(section_score * 5, 35)
 
     skills = parsed_data.get("skills", [])
-    score += min(len(skills) * 2, 40)
+    score += min(len(skills) * 3, 35)
 
     if parsed_data.get("email"):
-        score += 10
+        score += 8
     if parsed_data.get("phone"):
+        score += 7
+
+    word_count = parsed_data.get("word_count", 0)
+    if 350 <= word_count <= 900:
+        score += 15
+    elif 200 <= word_count < 350 or 900 < word_count <= 1200:
         score += 10
+    elif word_count >= 120:
+        score += 5
 
     return round(score, 2)
 

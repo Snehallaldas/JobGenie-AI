@@ -15,6 +15,16 @@ from app.config import get_settings
 router = APIRouter()
 settings = get_settings()
 
+
+async def refresh_resume_analysis(resume: Resume, db: AsyncSession) -> Resume:
+    parsed_data = parse_resume(resume.raw_text or "")
+    if parsed_data != resume.parsed_data or parsed_data.get("ats_score") != resume.ats_score:
+        resume.parsed_data = parsed_data
+        resume.ats_score = parsed_data.get("ats_score")
+        await db.commit()
+        await db.refresh(resume)
+    return resume
+
 @router.post("/upload", response_model=ResumeUploadResponse)
 async def upload_resume(
     file: UploadFile = File(...),
@@ -70,7 +80,10 @@ async def list_resumes(
     result = await db.execute(
         select(Resume).where(Resume.user_id == current_user.id)
     )
-    return result.scalars().all()
+    resumes = result.scalars().all()
+    for resume in resumes:
+        await refresh_resume_analysis(resume, db)
+    return resumes
 
 @router.get("/{resume_id}", response_model=ResumeUploadResponse)
 async def get_resume(
@@ -87,4 +100,4 @@ async def get_resume(
     resume = result.scalar_one_or_none()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
-    return resume
+    return await refresh_resume_analysis(resume, db)

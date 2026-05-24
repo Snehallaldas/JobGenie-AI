@@ -2,6 +2,7 @@ import chromadb
 import httpx
 
 from app.config import get_settings
+from app.services.resume_parser import normalize_skill
 
 settings = get_settings()
 
@@ -109,7 +110,7 @@ def match_resume_to_job(resume_id: str, top_k: int = 5) -> list[dict]:
         distance = matches["distances"][0][i]
         if hasattr(distance, "item"):
             distance = distance.item()
-        similarity = round((1 - distance) * 100, 2)
+        similarity = round(max(0, min(100, (1 - distance) * 100)), 2)
         results.append({
             "job_id": matches["ids"][0][i],
             "job_title": matches["metadatas"][0][i].get("title", "Unknown"),
@@ -122,8 +123,16 @@ def match_resume_to_job(resume_id: str, top_k: int = 5) -> list[dict]:
 
 def compute_skill_gap(resume_skills: list[str], job_skills: list[str]) -> dict:
     """Compare resume skills against job required skills."""
-    resume_set = set(s.lower() for s in resume_skills)
-    job_set = set(s.lower() for s in job_skills)
+    resume_set = {
+        normalize_skill(skill)
+        for skill in resume_skills
+        if skill and normalize_skill(skill)
+    }
+    job_set = {
+        normalize_skill(skill)
+        for skill in job_skills
+        if skill and normalize_skill(skill)
+    }
 
     matched = resume_set.intersection(job_set)
     missing = job_set.difference(resume_set)
@@ -132,8 +141,8 @@ def compute_skill_gap(resume_skills: list[str], job_skills: list[str]) -> dict:
     match_percentage = round(len(matched) / len(job_set) * 100, 2) if job_set else 0
 
     return {
-        "matched_skills": list(matched),
-        "missing_skills": list(missing),
-        "extra_skills": list(extra),
+        "matched_skills": sorted(matched),
+        "missing_skills": sorted(missing),
+        "extra_skills": sorted(extra),
         "match_percentage": match_percentage
     }

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from uuid import UUID
 from typing import Optional
 from datetime import datetime
@@ -11,6 +11,7 @@ from app.models.job import Job
 from app.models.resume import Resume
 from app.models.user import User
 from app.services.auth_service import get_current_user
+from app.services.resume_parser import extract_skills
 from app.services.embedding_service import (
     store_job_embedding,
     match_resume_to_job,
@@ -26,7 +27,7 @@ class JobCreate(BaseModel):
     title: str
     company: Optional[str] = None
     description: str
-    required_skills: list[str] = []
+    required_skills: list[str] = Field(default_factory=list)
 
 class JobResponse(BaseModel):
     id: UUID
@@ -45,11 +46,15 @@ async def create_job(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    required_skills = job_data.required_skills or extract_skills(
+        f"{job_data.title} {job_data.description}"
+    )
+
     job = Job(
         title=job_data.title,
         company=job_data.company,
         description=job_data.description,
-        required_skills=job_data.required_skills,
+        required_skills=required_skills,
         user_id=current_user.id
     )
     db.add(job)
@@ -63,7 +68,7 @@ async def create_job(
         metadata={
             "title": job_data.title,
             "company": job_data.company or "",
-            "skills": ",".join(job_data.required_skills)
+            "skills": ",".join(required_skills)
         }
     )
     return job
@@ -106,9 +111,16 @@ async def match_jobs(
 
     all_jobs_result = await db.execute(select(Job).where(Job.expires_at > datetime.utcnow()))
     all_jobs = all_jobs_result.scalars().all()
-    active_job_ids = {str(job.id) for job in all_jobs}
+    active_jobs_by_id = {str(job.id): job for job in all_jobs}
+    active_job_ids = set(active_jobs_by_id)
+    if not active_job_ids:
+        return {"resume_id": str(resume_id), "matches": []}
 
     for job in all_jobs:
+        job_skills = job.required_skills or extract_skills(f"{job.title} {job.description}")
+        if not job.required_skills and job_skills:
+            job.required_skills = job_skills
+
         existing_job = job_collection.get(ids=[str(job.id)], include=[])
         if not existing_job["ids"]:
             store_job_embedding(
@@ -117,9 +129,11 @@ async def match_jobs(
                 metadata={
                     "title": job.title,
                     "company": job.company or "",
-                    "skills": ",".join(job.required_skills or [])
+                    "skills": ",".join(job_skills)
                 }
             )
+
+    await db.commit()
 
     try:
         matches = match_resume_to_job(str(resume_id), top_k=max(5, len(active_job_ids)))
@@ -127,10 +141,33 @@ async def match_jobs(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-    matches = [
-        match for match in matches
-        if match["job_id"] in active_job_ids
-    ][:5]
+    enriched_matches = []
+    resume_skills = resume.parsed_data.get("skills") or extract_skills(resume.raw_text)
+    for match in matches:
+        job = active_jobs_by_id.get(match["job_id"])
+        if not job:
+            continue
+
+        job_skills = job.required_skills or extract_skills(f"{job.title} {job.description}")
+        gap = compute_skill_gap(resume_skills, job_skills)
+        semantic_score = match.get("similarity_score", 0)
+        skill_score = gap["match_percentage"]
+        final_score = round((semantic_score * 0.6) + (skill_score * 0.4), 2)
+
+        enriched_matches.append({
+            **match,
+            "similarity_score": final_score,
+            "semantic_score": semantic_score,
+            "skill_match_score": skill_score,
+            "matched_skills": gap["matched_skills"],
+            "missing_skills": gap["missing_skills"]
+        })
+
+    matches = sorted(
+        enriched_matches,
+        key=lambda item: item["similarity_score"],
+        reverse=True
+    )[:5]
 
     return {"resume_id": str(resume_id), "matches": matches}
 
@@ -161,8 +198,12 @@ async def skill_gap(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    resume_skills = resume.parsed_data.get("skills", [])
-    job_skills = job.required_skills or []
+    resume_skills = resume.parsed_data.get("skills") or extract_skills(resume.raw_text)
+    job_skills = job.required_skills or extract_skills(f"{job.title} {job.description}")
+    if not job.required_skills and job_skills:
+        job.required_skills = job_skills
+        await db.commit()
+
     gap = compute_skill_gap(resume_skills, job_skills)
 
     return {
