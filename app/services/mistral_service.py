@@ -1,5 +1,4 @@
 import json
-
 import httpx
 from app.config import get_settings
 
@@ -35,9 +34,15 @@ def _complete_chat(model: str, prompt: str) -> str:
 
     return response.json()["choices"][0]["message"]["content"]
 
-def generate_questions(resume_text: str, job_title: str, job_description: str, num_questions: int = 5) -> list[dict]:
+
+def generate_questions(
+    resume_text: str,
+    job_title: str,
+    job_description: str,
+    num_questions: int = 5
+) -> list[dict]:
     """Generate interview questions based on resume and job description."""
-    
+
     prompt = f"""You are an expert technical interviewer. Based on the resume and job description below, generate {num_questions} interview questions.
 
 RESUME:
@@ -64,19 +69,55 @@ Respond ONLY with a JSON object, no other text:
 }}"""
 
     content = _complete_chat(settings.MISTRAL_LARGE_MODEL, prompt)
-    # Handle both array and object responses
     parsed = json.loads(content)
-    if isinstance(parsed, list):
-        return parsed
-    # Sometimes Mistral wraps in an object
-    for key in parsed:
-        if isinstance(parsed[key], list):
-            return parsed[key]
-    return []
 
-def evaluate_answer(question: str, answer: str, expected_keywords: list[str], job_title: str) -> dict:
+    questions = []
+    if isinstance(parsed, list):
+        questions = parsed
+    else:
+        for key in parsed:
+            if isinstance(parsed[key], list):
+                questions = parsed[key]
+                break
+
+    # Ensure each question has required fields
+    sanitized = []
+    for q in questions:
+        sanitized.append({
+            "question": q.get("question", "Tell me about yourself."),
+            "type": q.get("type", "general"),
+            "difficulty": q.get("difficulty", "medium"),
+            "expected_keywords": q.get("expected_keywords", [])
+        })
+
+    return sanitized
+
+
+def evaluate_answer(
+    question: str,
+    answer: str,
+    expected_keywords: list[str],
+    job_title: str
+) -> dict:
     """Evaluate a candidate's answer and return scores + feedback."""
-    
+
+    # Detect gibberish/random/too short answers
+    word_count = len(answer.strip().split())
+    if word_count < 5:
+        return {
+            "relevance_score": 0,
+            "technical_depth_score": 0,
+            "clarity_score": 0,
+            "overall_score": 0,
+            "feedback": "Answer is too short or incomplete. Please provide a detailed response.",
+            "strengths": [],
+            "improvements": [
+                "Provide a complete and relevant answer",
+                "Address the question directly"
+            ],
+            "keywords_used": []
+        }
+
     prompt = f"""You are an expert interviewer evaluating a candidate's answer for a {job_title} position.
 
 QUESTION: {question}
@@ -85,12 +126,19 @@ CANDIDATE'S ANSWER: {answer}
 
 EXPECTED KEYWORDS: {", ".join(expected_keywords)}
 
-Evaluate the answer on these criteria and respond ONLY with JSON:
+IMPORTANT SCORING RULES:
+- If the answer is random text, gibberish, or completely irrelevant, score 0-2
+- If the answer is vague but somewhat related, score 3-5
+- If the answer is good but incomplete, score 6-7
+- Only score 8-10 for excellent, detailed, relevant answers
+- All scores MUST be integers between 0 and 10
+
+Evaluate the answer and respond ONLY with JSON:
 {{
-  "relevance_score": <0-10>,
-  "technical_depth_score": <0-10>,
-  "clarity_score": <0-10>,
-  "overall_score": <0-10>,
+  "relevance_score": <integer 0-10>,
+  "technical_depth_score": <integer 0-10>,
+  "clarity_score": <integer 0-10>,
+  "overall_score": <integer 0-10>,
   "feedback": "detailed feedback here",
   "strengths": ["strength1", "strength2"],
   "improvements": ["improvement1", "improvement2"],
@@ -99,11 +147,27 @@ Evaluate the answer on these criteria and respond ONLY with JSON:
 
     content = _complete_chat(settings.MISTRAL_LARGE_MODEL, prompt)
     parsed = json.loads(content)
+
+    # Sanitize all scores to prevent NaN
+    score_fields = ["relevance_score", "technical_depth_score", "clarity_score", "overall_score"]
+    for field in score_fields:
+        try:
+            parsed[field] = max(0, min(10, int(float(parsed.get(field, 0) or 0))))
+        except (TypeError, ValueError):
+            parsed[field] = 0
+
+    # Ensure all required fields exist with safe defaults
+    parsed.setdefault("feedback", "No feedback provided.")
+    parsed.setdefault("strengths", [])
+    parsed.setdefault("improvements", [])
+    parsed.setdefault("keywords_used", [])
+
     return parsed
+
 
 def generate_feedback_report(session_data: dict) -> dict:
     """Generate a final performance report with learning resources."""
-    
+
     prompt = f"""You are a career coach generating a performance report for a candidate.
 
 JOB TITLE: {session_data['job_title']}
@@ -131,4 +195,14 @@ Generate a comprehensive report and respond ONLY with JSON:
 }}"""
 
     content = _complete_chat(settings.MISTRAL_SMALL_MODEL, prompt)
-    return json.loads(content)
+    parsed = json.loads(content)
+
+    # Ensure all required fields exist with safe defaults
+    parsed.setdefault("overall_assessment", "No assessment provided.")
+    parsed.setdefault("top_strengths", [])
+    parsed.setdefault("areas_to_improve", [])
+    parsed.setdefault("learning_resources", [])
+    parsed.setdefault("readiness_level", "needs work")
+    parsed.setdefault("next_steps", [])
+
+    return parsed

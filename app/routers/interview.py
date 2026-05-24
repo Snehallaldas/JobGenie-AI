@@ -45,10 +45,7 @@ async def start_interview(
         raise HTTPException(status_code=404, detail="Resume not found")
 
     job_result = await db.execute(
-        select(Job).where(
-            Job.id == request.job_id,
-            Job.user_id == current_user.id
-        )
+        select(Job).where(Job.id == request.job_id)
     )
     job = job_result.scalar_one_or_none()
     if not job:
@@ -211,6 +208,17 @@ async def complete_interview(
         "total_questions": len(answers),
         "report": report
     }
+
+@router.get("/sessions")
+async def list_sessions(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(InterviewSession).where(InterviewSession.user_id == current_user.id)
+    )
+    return result.scalars().all()
+
 
 @router.get("/report/{session_id}")
 async def get_report(

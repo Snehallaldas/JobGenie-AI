@@ -71,9 +71,7 @@ async def list_jobs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(
-        select(Job).where(Job.user_id == current_user.id)
-    )
+    result = await db.execute(select(Job))  # all jobs, public
     return result.scalars().all()
 
 @router.get("/match/{resume_id}")
@@ -104,9 +102,7 @@ async def match_jobs(
             }
         )
 
-    all_jobs_result = await db.execute(
-        select(Job).where(Job.user_id == current_user.id)
-    )
+    all_jobs_result = await db.execute(select(Job))  # match against all jobs
     all_jobs = all_jobs_result.scalars().all()
     for job in all_jobs:
         existing_job = job_collection.get(ids=[str(job.id)], include=[])
@@ -147,10 +143,7 @@ async def skill_gap(
         raise HTTPException(status_code=404, detail="Resume not found")
 
     job_result = await db.execute(
-        select(Job).where(
-            Job.id == job_id,
-            Job.user_id == current_user.id
-        )
+        select(Job).where(Job.id == job_id)  # any job accessible
     )
     job = job_result.scalar_one_or_none()
     if not job:
