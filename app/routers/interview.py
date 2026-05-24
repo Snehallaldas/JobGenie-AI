@@ -4,6 +4,7 @@ from sqlalchemy import select, update
 from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
+import math
 from app.database import get_db
 from app.models.interview import InterviewSession
 from app.models.resume import Resume
@@ -17,6 +18,85 @@ from app.services.mistral_service import (
 )
 
 router = APIRouter()
+
+SCORE_FIELDS = {
+    "relevance_score": "relevance",
+    "technical_depth_score": "technical_depth",
+    "clarity_score": "clarity",
+    "overall_score": "overall"
+}
+
+
+def _safe_score(value) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0
+
+    if not math.isfinite(score):
+        return 0
+
+    return max(0, min(10, score))
+
+
+def _average_score(answers: list[dict], score_field: str) -> float:
+    scores = [
+        _safe_score(answer.get("evaluation", {}).get(score_field, 0))
+        for answer in answers
+    ]
+    return round(sum(scores) / len(scores), 2) if scores else 0
+
+
+def _score_grade(score: float) -> str:
+    if score >= 9:
+        return "A"
+    if score >= 8:
+        return "B"
+    if score >= 6:
+        return "C"
+    if score >= 4:
+        return "D"
+    return "F"
+
+
+def _score_status(score: float) -> str:
+    if score >= 8:
+        return "strong"
+    if score >= 6:
+        return "needs practice"
+    return "needs improvement"
+
+
+def build_score_card(answers: list[dict], total_questions: int) -> dict:
+    overall_score = _average_score(answers, "overall_score")
+    category_scores = {
+        label: _average_score(answers, field)
+        for field, label in SCORE_FIELDS.items()
+        if field != "overall_score"
+    }
+    question_scores = [
+        {
+            "question_index": answer.get("question_index"),
+            "question": answer.get("question"),
+            "overall_score": _safe_score(answer.get("evaluation", {}).get("overall_score", 0)),
+            "relevance_score": _safe_score(answer.get("evaluation", {}).get("relevance_score", 0)),
+            "technical_depth_score": _safe_score(answer.get("evaluation", {}).get("technical_depth_score", 0)),
+            "clarity_score": _safe_score(answer.get("evaluation", {}).get("clarity_score", 0)),
+            "feedback": answer.get("evaluation", {}).get("feedback", "")
+        }
+        for answer in answers
+    ]
+
+    return {
+        "overall_score": overall_score,
+        "score_percentage": round(overall_score * 10, 2),
+        "grade": _score_grade(overall_score),
+        "status": _score_status(overall_score),
+        "answered_questions": len(answers),
+        "total_questions": total_questions,
+        "category_scores": category_scores,
+        "question_scores": question_scores
+    }
 
 class StartInterviewRequest(BaseModel):
     resume_id: UUID
@@ -170,12 +250,12 @@ async def complete_interview(
     if not answers:
         raise HTTPException(status_code=400, detail="No answers submitted yet")
 
-    scores = [a["evaluation"].get("overall_score", 0) for a in answers]
-    average_score = round(sum(scores) / len(scores), 2)
+    score_card = build_score_card(answers, len(session.questions or []))
+    average_score = score_card["overall_score"]
 
     performance_summary = "\n".join([
         f"Q{a['question_index']+1}: {a['question']}\n"
-        f"Score: {a['evaluation'].get('overall_score', 0)}/10\n"
+        f"Score: {_safe_score(a['evaluation'].get('overall_score', 0))}/10\n"
         f"Feedback: {a['evaluation'].get('feedback', '')}\n"
         for a in answers
     ])
@@ -190,6 +270,7 @@ async def complete_interview(
             "total_questions": len(answers),
             "performance_summary": performance_summary
         })
+        report["score_card"] = score_card
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
@@ -209,6 +290,7 @@ async def complete_interview(
         "session_id": str(session_id),
         "average_score": average_score,
         "total_questions": len(answers),
+        "score_card": score_card,
         "report": report
     }
 
@@ -245,9 +327,14 @@ async def get_report(
             detail=f"Session not completed yet. Status: {session.status}"
         )
 
+    report = session.report or {}
+    score_card = build_score_card(session.answers or [], len(session.questions or []))
+    report["score_card"] = score_card
+
     return {
         "session_id": str(session_id),
-        "average_score": session.average_score,
-        "report": session.report,
+        "average_score": _safe_score(session.average_score),
+        "score_card": score_card,
+        "report": report,
         "answers": session.answers
     }

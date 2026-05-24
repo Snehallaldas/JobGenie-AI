@@ -1,10 +1,59 @@
 import json
+import math
+import re
 import httpx
 from app.config import get_settings
 
 settings = get_settings()
 
 MISTRAL_CHAT_URL = "https://api.mistral.ai/v1/chat/completions"
+SCORE_FIELDS = ["relevance_score", "technical_depth_score", "clarity_score", "overall_score"]
+
+
+def _safe_score(value) -> int:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0
+
+    if not math.isfinite(score):
+        return 0
+
+    return max(0, min(10, int(score)))
+
+
+def _zero_evaluation(feedback: str) -> dict:
+    return {
+        "relevance_score": 0,
+        "technical_depth_score": 0,
+        "clarity_score": 0,
+        "overall_score": 0,
+        "feedback": feedback,
+        "strengths": [],
+        "improvements": [
+            "Provide a complete and relevant answer",
+            "Address the question directly"
+        ],
+        "keywords_used": []
+    }
+
+
+def _is_low_quality_answer(answer: str) -> bool:
+    words = re.findall(r"[A-Za-z]+", answer.lower())
+    if len(answer.strip().split()) < 5:
+        return True
+    if len(words) < 5:
+        return True
+    if len(set(words)) <= 2:
+        return True
+
+    letters = "".join(words)
+    if len(letters) < 15:
+        return True
+
+    vowel_count = sum(1 for char in letters if char in "aeiou")
+    vowel_ratio = vowel_count / len(letters)
+    return vowel_ratio < 0.18
 
 
 def _complete_chat(model: str, prompt: str) -> str:
@@ -101,22 +150,10 @@ def evaluate_answer(
 ) -> dict:
     """Evaluate a candidate's answer and return scores + feedback."""
 
-    # Detect gibberish/random/too short answers
-    word_count = len(answer.strip().split())
-    if word_count < 5:
-        return {
-            "relevance_score": 0,
-            "technical_depth_score": 0,
-            "clarity_score": 0,
-            "overall_score": 0,
-            "feedback": "Answer is too short or incomplete. Please provide a detailed response.",
-            "strengths": [],
-            "improvements": [
-                "Provide a complete and relevant answer",
-                "Address the question directly"
-            ],
-            "keywords_used": []
-        }
+    if _is_low_quality_answer(answer):
+        return _zero_evaluation(
+            "Answer appears incomplete, random, or unrelated. Please provide a meaningful response."
+        )
 
     prompt = f"""You are an expert interviewer evaluating a candidate's answer for a {job_title} position.
 
@@ -148,13 +185,8 @@ Evaluate the answer and respond ONLY with JSON:
     content = _complete_chat(settings.MISTRAL_LARGE_MODEL, prompt)
     parsed = json.loads(content)
 
-    # Sanitize all scores to prevent NaN
-    score_fields = ["relevance_score", "technical_depth_score", "clarity_score", "overall_score"]
-    for field in score_fields:
-        try:
-            parsed[field] = max(0, min(10, int(float(parsed.get(field, 0) or 0))))
-        except (TypeError, ValueError):
-            parsed[field] = 0
+    for field in SCORE_FIELDS:
+        parsed[field] = _safe_score(parsed.get(field, 0))
 
     # Ensure all required fields exist with safe defaults
     parsed.setdefault("feedback", "No feedback provided.")
