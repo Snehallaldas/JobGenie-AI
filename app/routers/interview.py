@@ -287,9 +287,10 @@ async def submit_answer(
     await db.commit()
 
     return {
-        "question_index": request.question_index,
-        "question": question["question"],
-        "evaluation": evaluation
+        "score": _safe_score(evaluation.get("overall_score", 0)) * 10,
+        "feedback": evaluation.get("feedback", ""),
+        "strengths": evaluation.get("strengths", []),
+        "improvements": evaluation.get("improvements", [])
     }
 
 @router.post("/complete/{session_id}")
@@ -352,10 +353,21 @@ async def complete_interview(
 
     return {
         "session_id": str(session_id),
-        "average_score": average_score,
-        "total_questions": len(answers),
-        "score_card": score_card,
-        "report": report
+        "overall_score": score_card.get("score_percentage", 0),
+        "total_questions": len(session.questions or []),
+        "questions_answered": len(answers),
+        "strengths": report.get("top_strengths", []),
+        "improvements": report.get("areas_to_improve", []),
+        "learning_resources": report.get("learning_resources", []),
+        "per_question": [
+            {
+                "question": q.get("question", ""),
+                "answer": q.get("answer", ""),
+                "score": _safe_score(q.get("evaluation", {}).get("overall_score", 0)) * 10,
+                "feedback": q.get("evaluation", {}).get("feedback", "")
+            }
+            for q in answers
+        ]
     }
 
 @router.get("/sessions")
@@ -411,8 +423,19 @@ async def get_report(
 
     return {
         "session_id": str(session_id),
-        "average_score": _safe_score(session.average_score),
-        "score_card": score_card,
-        "report": report,
-        "answers": answers
+        "overall_score": score_card.get("score_percentage", 0),
+        "total_questions": len(session.questions or []),
+        "questions_answered": len(answers),
+        "strengths": report.get("top_strengths", []),
+        "improvements": report.get("areas_to_improve", []),
+        "learning_resources": report.get("learning_resources", []),
+        "per_question": [
+            {
+                "question": q.get("question", ""),
+                "answer": q.get("answer", ""),
+                "score": _safe_score(q.get("evaluation", {}).get("overall_score", 0)) * 10,
+                "feedback": q.get("evaluation", {}).get("feedback", "")
+            }
+            for q in answers
+        ]
     }
