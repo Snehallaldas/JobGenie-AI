@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, EmailStr
@@ -12,10 +13,6 @@ from app.services.auth_service import (
 )
 
 router = APIRouter()
-
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -37,7 +34,6 @@ class TokenResponse(BaseModel):
 
 @router.post("/register", response_model=TokenResponse)
 async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    # Check if email already exists
     result = await db.execute(select(User).where(User.email == request.email))
     existing = result.scalar_one_or_none()
     if existing:
@@ -46,7 +42,6 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
             detail="Email already registered"
         )
 
-    # Create user
     user = User(
         email=request.email,
         full_name=request.full_name,
@@ -56,7 +51,6 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
     await db.commit()
     await db.refresh(user)
 
-    # Return token immediately so user is logged in after register
     token = create_access_token({"sub": user.email})
     return {
         "access_token": token,
@@ -66,14 +60,13 @@ async def register(request: RegisterRequest, db: AsyncSession = Depends(get_db))
 
 @router.post("/login", response_model=TokenResponse)
 async def login(
-    request: LoginRequest,
+    form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
 ):
-    # Find user
-    result = await db.execute(select(User).where(User.email == request.email))
+    result = await db.execute(select(User).where(User.email == form_data.username))
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(request.password, user.hashed_password):
+    if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
