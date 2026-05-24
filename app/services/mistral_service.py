@@ -178,6 +178,29 @@ def _validate_evaluation_response(parsed: dict) -> bool:
     return True
 
 
+def _sanitize_feedback_arrays(data: dict) -> dict:
+    """Ensure feedback arrays are valid lists of non-empty strings."""
+    if not isinstance(data.get("strengths"), list):
+        data["strengths"] = []
+    else:
+        # Filter out empty/non-string items
+        data["strengths"] = [str(s).strip() for s in data["strengths"] if s and isinstance(s, (str, int, float))][:5]
+    
+    if not isinstance(data.get("improvements"), list):
+        data["improvements"] = []
+    else:
+        # Filter out empty/non-string items
+        data["improvements"] = [str(i).strip() for i in data["improvements"] if i and isinstance(i, (str, int, float))][:5]
+    
+    if not isinstance(data.get("keywords_used"), list):
+        data["keywords_used"] = []
+    else:
+        # Filter out empty/non-string items
+        data["keywords_used"] = [str(k).strip() for k in data["keywords_used"] if k and isinstance(k, (str, int, float))][:10]
+    
+    return data
+
+
 def evaluate_answer(
     question: str,
     answer: str,
@@ -206,6 +229,7 @@ IMPORTANT SCORING RULES:
 - Only score 8-10 for excellent, detailed, relevant answers
 - All scores MUST be integers between 0 and 10
 - Return ONLY valid JSON with no extra text
+- CRITICAL: strengths, improvements, and keywords_used MUST be non-empty lists of strings when provided
 
 Evaluate the answer and respond ONLY with JSON:
 {{
@@ -253,6 +277,9 @@ Evaluate the answer and respond ONLY with JSON:
             parsed.setdefault("strengths", [])
             parsed.setdefault("improvements", [])
             parsed.setdefault("keywords_used", [])
+            
+            # Sanitize and validate feedback arrays
+            parsed = _sanitize_feedback_arrays(parsed)
             
             return parsed
             
@@ -318,5 +345,15 @@ Generate a comprehensive report and respond ONLY with JSON:
     parsed.setdefault("learning_resources", [])
     parsed.setdefault("readiness_level", "needs work")
     parsed.setdefault("next_steps", [])
+    
+    # Sanitize list fields
+    if not isinstance(parsed["top_strengths"], list):
+        parsed["top_strengths"] = []
+    if not isinstance(parsed["areas_to_improve"], list):
+        parsed["areas_to_improve"] = []
+    if not isinstance(parsed["next_steps"], list):
+        parsed["next_steps"] = []
+    if not isinstance(parsed["learning_resources"], list):
+        parsed["learning_resources"] = []
 
     return parsed
