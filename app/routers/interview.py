@@ -72,6 +72,30 @@ def _get_feedback(answer: dict | None) -> str:
     return feedback if isinstance(feedback, str) else ""
 
 
+def _get_strengths(answer: dict | None) -> list:
+    """Extract strengths from answer evaluation."""
+    strengths = _get_evaluation(answer).get("strengths", [])
+    if isinstance(strengths, list):
+        return [str(s).strip() for s in strengths if s][:5]
+    return []
+
+
+def _get_improvements(answer: dict | None) -> list:
+    """Extract improvements from answer evaluation."""
+    improvements = _get_evaluation(answer).get("improvements", [])
+    if isinstance(improvements, list):
+        return [str(i).strip() for i in improvements if i][:5]
+    return []
+
+
+def _get_keywords_used(answer: dict | None) -> list:
+    """Extract keywords used from answer evaluation."""
+    keywords = _get_evaluation(answer).get("keywords_used", [])
+    if isinstance(keywords, list):
+        return [str(k).strip() for k in keywords if k][:10]
+    return []
+
+
 def _average_score(answers: list[dict], score_field: str) -> float:
     scores = [_get_score(answer, score_field) for answer in answers]
     return round(sum(scores) / len(scores), 2) if scores else 0
@@ -113,7 +137,10 @@ def build_score_card(answers: list[dict], total_questions: int) -> dict:
             "relevance_score": _get_score(answer, "relevance_score"),
             "technical_depth_score": _get_score(answer, "technical_depth_score"),
             "clarity_score": _get_score(answer, "clarity_score"),
-            "feedback": _get_feedback(answer)
+            "feedback": _get_feedback(answer),
+            "strengths": _get_strengths(answer),
+            "improvements": _get_improvements(answer),
+            "keywords_used": _get_keywords_used(answer)
         }
         for answer in safe_answers
     ]
