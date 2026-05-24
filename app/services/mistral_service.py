@@ -8,6 +8,7 @@ settings = get_settings()
 
 MISTRAL_CHAT_URL = "https://api.mistral.ai/v1/chat/completions"
 SCORE_FIELDS = ["relevance_score", "technical_depth_score", "clarity_score", "overall_score"]
+MAX_RETRIES = 2
 
 
 def _safe_score(value) -> int:
@@ -158,6 +159,25 @@ Respond ONLY with a JSON object, no other text:
     return sanitized
 
 
+def _validate_evaluation_response(parsed: dict) -> bool:
+    """Validate that the API response has all required score fields."""
+    required_fields = ["relevance_score", "technical_depth_score", "clarity_score", "overall_score"]
+    
+    for field in required_fields:
+        if field not in parsed:
+            return False
+        value = parsed[field]
+        # Check if value is a valid number
+        try:
+            score = float(value)
+            if not math.isfinite(score):
+                return False
+        except (TypeError, ValueError):
+            return False
+    
+    return True
+
+
 def evaluate_answer(
     question: str,
     answer: str,
@@ -177,7 +197,7 @@ QUESTION: {question}
 
 CANDIDATE'S ANSWER: {answer}
 
-EXPECTED KEYWORDS: {", ".join(expected_keywords)}
+EXPECTED KEYWORDS: {", ".join(expected_keywords) if expected_keywords else "N/A"}
 
 IMPORTANT SCORING RULES:
 - If the answer is random text, gibberish, or completely irrelevant, score 0-2
@@ -185,6 +205,7 @@ IMPORTANT SCORING RULES:
 - If the answer is good but incomplete, score 6-7
 - Only score 8-10 for excellent, detailed, relevant answers
 - All scores MUST be integers between 0 and 10
+- Return ONLY valid JSON with no extra text
 
 Evaluate the answer and respond ONLY with JSON:
 {{
@@ -198,19 +219,53 @@ Evaluate the answer and respond ONLY with JSON:
   "keywords_used": ["keywords from expected that were mentioned"]
 }}"""
 
-    content = _complete_chat(settings.MISTRAL_LARGE_MODEL, prompt)
-    parsed = json.loads(content)
-
-    for field in SCORE_FIELDS:
-        parsed[field] = _safe_score(parsed.get(field, 0))
-
-    # Ensure all required fields exist with safe defaults
-    parsed.setdefault("feedback", "No feedback provided.")
-    parsed.setdefault("strengths", [])
-    parsed.setdefault("improvements", [])
-    parsed.setdefault("keywords_used", [])
-
-    return parsed
+    # Retry logic for API calls
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            content = _complete_chat(settings.MISTRAL_LARGE_MODEL, prompt)
+            
+            # Try to parse and validate JSON
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError as e:
+                if attempt < MAX_RETRIES:
+                    continue
+                # If last attempt failed, return zero evaluation
+                return _zero_evaluation(
+                    f"Failed to parse evaluation response. Please try again."
+                )
+            
+            # Validate response has all required fields
+            if not _validate_evaluation_response(parsed):
+                if attempt < MAX_RETRIES:
+                    continue
+                # If validation failed after retries, return zero evaluation
+                return _zero_evaluation(
+                    "Evaluation response was incomplete or invalid."
+                )
+            
+            # Convert all scores to safe integers
+            for field in SCORE_FIELDS:
+                parsed[field] = _safe_score(parsed.get(field, 0))
+            
+            # Ensure all required fields exist with safe defaults
+            parsed.setdefault("feedback", "No feedback provided.")
+            parsed.setdefault("strengths", [])
+            parsed.setdefault("improvements", [])
+            parsed.setdefault("keywords_used", [])
+            
+            return parsed
+            
+        except RuntimeError as e:
+            if attempt < MAX_RETRIES:
+                continue
+            # If API call fails after retries, return zero evaluation
+            return _zero_evaluation(
+                f"Unable to evaluate answer due to service error: {str(e)}"
+            )
+    
+    # Fallback (should not reach here)
+    return _zero_evaluation("Evaluation service unavailable. Please try again.")
 
 
 def generate_feedback_report(session_data: dict) -> dict:
@@ -242,8 +297,19 @@ Generate a comprehensive report and respond ONLY with JSON:
   "next_steps": ["step1", "step2", "step3"]
 }}"""
 
-    content = _complete_chat(settings.MISTRAL_SMALL_MODEL, prompt)
-    parsed = json.loads(content)
+    try:
+        content = _complete_chat(settings.MISTRAL_SMALL_MODEL, prompt)
+        parsed = json.loads(content)
+    except (RuntimeError, json.JSONDecodeError) as e:
+        # Return a safe default report if API fails
+        return {
+            "overall_assessment": "Unable to generate assessment at this time.",
+            "top_strengths": [],
+            "areas_to_improve": [],
+            "learning_resources": [],
+            "readiness_level": "needs work",
+            "next_steps": ["Review the feedback from individual answers above"]
+        }
 
     # Ensure all required fields exist with safe defaults
     parsed.setdefault("overall_assessment", "No assessment provided.")
