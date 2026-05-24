@@ -38,22 +38,38 @@ def _zero_evaluation(feedback: str) -> dict:
     }
 
 
-def _is_low_quality_answer(answer: str) -> bool:
-    words = re.findall(r"[A-Za-z]+", answer.lower())
-    if len(answer.strip().split()) < 5:
+def _is_low_quality_answer(answer: str, expected_keywords: list[str] | None = None) -> bool:
+    normalized_answer = answer.strip()
+    if not normalized_answer:
         return True
-    if len(words) < 5:
+
+    words = re.findall(r"[A-Za-z0-9]+", normalized_answer.lower())
+    if not words:
         return True
-    if len(set(words)) <= 2:
+
+    normalized_keywords = {keyword.lower() for keyword in (expected_keywords or []) if keyword}
+    keyword_match = any(keyword in normalized_answer.lower() for keyword in normalized_keywords)
+    has_substantial_word = any(len(word) >= 4 for word in words)
+
+    if keyword_match:
+        return False
+
+    if len(words) < 3:
+        return True
+
+    if not has_substantial_word:
+        return True
+
+    if len(set(words)) < 2:
         return True
 
     letters = "".join(words)
-    if len(letters) < 15:
+    if len(letters) < 8:
         return True
 
     vowel_count = sum(1 for char in letters if char in "aeiou")
     vowel_ratio = vowel_count / len(letters)
-    return vowel_ratio < 0.18
+    return vowel_ratio < 0.12 and len(words) < 8
 
 
 def _complete_chat(model: str, prompt: str) -> str:
@@ -150,7 +166,7 @@ def evaluate_answer(
 ) -> dict:
     """Evaluate a candidate's answer and return scores + feedback."""
 
-    if _is_low_quality_answer(answer):
+    if _is_low_quality_answer(answer, expected_keywords):
         return _zero_evaluation(
             "Answer appears incomplete, random, or unrelated. Please provide a meaningful response."
         )

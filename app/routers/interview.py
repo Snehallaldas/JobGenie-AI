@@ -49,11 +49,31 @@ def _sanitize_json(value):
     return value
 
 
+def _get_answer_payload(answer: dict | None) -> dict:
+    if isinstance(answer, dict):
+        return answer
+    return {}
+
+
+def _get_evaluation(answer: dict | None) -> dict:
+    payload = _get_answer_payload(answer)
+    evaluation = payload.get("evaluation")
+    if isinstance(evaluation, dict):
+        return evaluation
+    return {}
+
+
+def _get_score(answer: dict | None, score_field: str) -> float:
+    return _safe_score(_get_evaluation(answer).get(score_field, 0))
+
+
+def _get_feedback(answer: dict | None) -> str:
+    feedback = _get_evaluation(answer).get("feedback", "")
+    return feedback if isinstance(feedback, str) else ""
+
+
 def _average_score(answers: list[dict], score_field: str) -> float:
-    scores = [
-        _safe_score(answer.get("evaluation", {}).get(score_field, 0))
-        for answer in answers
-    ]
+    scores = [_get_score(answer, score_field) for answer in answers]
     return round(sum(scores) / len(scores), 2) if scores else 0
 
 
@@ -78,23 +98,24 @@ def _score_status(score: float) -> str:
 
 
 def build_score_card(answers: list[dict], total_questions: int) -> dict:
-    overall_score = _average_score(answers, "overall_score")
+    safe_answers = [_get_answer_payload(answer) for answer in answers]
+    overall_score = _average_score(safe_answers, "overall_score")
     category_scores = {
-        label: _average_score(answers, field)
+        label: _average_score(safe_answers, field)
         for field, label in SCORE_FIELDS.items()
         if field != "overall_score"
     }
     question_scores = [
         {
             "question_index": answer.get("question_index"),
-            "question": answer.get("question"),
-            "overall_score": _safe_score(answer.get("evaluation", {}).get("overall_score", 0)),
-            "relevance_score": _safe_score(answer.get("evaluation", {}).get("relevance_score", 0)),
-            "technical_depth_score": _safe_score(answer.get("evaluation", {}).get("technical_depth_score", 0)),
-            "clarity_score": _safe_score(answer.get("evaluation", {}).get("clarity_score", 0)),
-            "feedback": answer.get("evaluation", {}).get("feedback", "")
+            "question": answer.get("question", ""),
+            "overall_score": _get_score(answer, "overall_score"),
+            "relevance_score": _get_score(answer, "relevance_score"),
+            "technical_depth_score": _get_score(answer, "technical_depth_score"),
+            "clarity_score": _get_score(answer, "clarity_score"),
+            "feedback": _get_feedback(answer)
         }
-        for answer in answers
+        for answer in safe_answers
     ]
 
     return {
@@ -102,7 +123,7 @@ def build_score_card(answers: list[dict], total_questions: int) -> dict:
         "score_percentage": round(overall_score * 10, 2),
         "grade": _score_grade(overall_score),
         "status": _score_status(overall_score),
-        "answered_questions": len(answers),
+        "answered_questions": len(safe_answers),
         "total_questions": total_questions,
         "category_scores": category_scores,
         "question_scores": question_scores
