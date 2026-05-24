@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from uuid import UUID
 from typing import Optional
 from datetime import datetime
+import math
 import traceback
 from app.database import get_db
 from app.models.job import Job
@@ -22,6 +23,18 @@ from app.services.embedding_service import (
 )
 
 router = APIRouter()
+
+
+def _safe_percentage(value) -> float:
+    try:
+        percentage = float(value)
+    except (TypeError, ValueError):
+        return 0
+
+    if not math.isfinite(percentage):
+        return 0
+
+    return round(max(0, min(100, percentage)), 2)
 
 class JobCreate(BaseModel):
     title: str
@@ -150,9 +163,9 @@ async def match_jobs(
 
         job_skills = job.required_skills or extract_skills(f"{job.title} {job.description}")
         gap = compute_skill_gap(resume_skills, job_skills)
-        semantic_score = match.get("similarity_score", 0)
-        skill_score = gap["match_percentage"]
-        final_score = round((semantic_score * 0.6) + (skill_score * 0.4), 2)
+        semantic_score = _safe_percentage(match.get("similarity_score", 0))
+        skill_score = _safe_percentage(gap["match_percentage"])
+        final_score = _safe_percentage((semantic_score * 0.6) + (skill_score * 0.4))
 
         enriched_matches.append({
             **match,

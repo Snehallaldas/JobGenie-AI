@@ -39,6 +39,16 @@ def _safe_score(value) -> float:
     return max(0, min(10, score))
 
 
+def _sanitize_json(value):
+    if isinstance(value, float):
+        return value if math.isfinite(value) else 0
+    if isinstance(value, dict):
+        return {key: _sanitize_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_json(item) for item in value]
+    return value
+
+
 def _average_score(answers: list[dict], score_field: str) -> float:
     scores = [
         _safe_score(answer.get("evaluation", {}).get(score_field, 0))
@@ -250,6 +260,7 @@ async def complete_interview(
     if not answers:
         raise HTTPException(status_code=400, detail="No answers submitted yet")
 
+    answers = _sanitize_json(answers)
     score_card = build_score_card(answers, len(session.questions or []))
     average_score = score_card["overall_score"]
 
@@ -270,6 +281,7 @@ async def complete_interview(
             "total_questions": len(answers),
             "performance_summary": performance_summary
         })
+        report = _sanitize_json(report)
         report["score_card"] = score_card
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
@@ -302,7 +314,20 @@ async def list_sessions(
     result = await db.execute(
         select(InterviewSession).where(InterviewSession.user_id == current_user.id)
     )
-    return result.scalars().all()
+    sessions = result.scalars().all()
+    return [
+        {
+            "id": str(session.id),
+            "resume_id": str(session.resume_id),
+            "job_id": str(session.job_id),
+            "status": session.status,
+            "average_score": _safe_score(session.average_score),
+            "report": _sanitize_json(session.report),
+            "created_at": session.created_at,
+            "completed_at": session.completed_at
+        }
+        for session in sessions
+    ]
 
 
 @router.get("/report/{session_id}")
@@ -327,8 +352,9 @@ async def get_report(
             detail=f"Session not completed yet. Status: {session.status}"
         )
 
-    report = session.report or {}
-    score_card = build_score_card(session.answers or [], len(session.questions or []))
+    answers = _sanitize_json(session.answers or [])
+    report = _sanitize_json(session.report or {})
+    score_card = build_score_card(answers, len(session.questions or []))
     report["score_card"] = score_card
 
     return {
@@ -336,5 +362,5 @@ async def get_report(
         "average_score": _safe_score(session.average_score),
         "score_card": score_card,
         "report": report,
-        "answers": session.answers
+        "answers": answers
     }

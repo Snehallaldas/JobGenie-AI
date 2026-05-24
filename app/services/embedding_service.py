@@ -1,5 +1,6 @@
 import chromadb
 import httpx
+import math
 
 from app.config import get_settings
 from app.services.resume_parser import normalize_skill
@@ -80,6 +81,18 @@ def store_job_embedding(job_id: str, text: str, metadata: dict) -> None:
     )
 
 
+def _safe_percentage(value) -> float:
+    try:
+        percentage = float(value)
+    except (TypeError, ValueError):
+        return 0
+
+    if not math.isfinite(percentage):
+        return 0
+
+    return round(max(0, min(100, percentage)), 2)
+
+
 def match_resume_to_job(resume_id: str, top_k: int = 5) -> list[dict]:
     job_count = job_collection.count()
     if job_count == 0:
@@ -110,7 +123,7 @@ def match_resume_to_job(resume_id: str, top_k: int = 5) -> list[dict]:
         distance = matches["distances"][0][i]
         if hasattr(distance, "item"):
             distance = distance.item()
-        similarity = round(max(0, min(100, (1 - distance) * 100)), 2)
+        similarity = _safe_percentage((1 - distance) * 100)
         results.append({
             "job_id": matches["ids"][0][i],
             "job_title": matches["metadatas"][0][i].get("title", "Unknown"),
@@ -138,7 +151,7 @@ def compute_skill_gap(resume_skills: list[str], job_skills: list[str]) -> dict:
     missing = job_set.difference(resume_set)
     extra = resume_set.difference(job_set)
 
-    match_percentage = round(len(matched) / len(job_set) * 100, 2) if job_set else 0
+    match_percentage = _safe_percentage(len(matched) / len(job_set) * 100) if job_set else 0
 
     return {
         "matched_skills": sorted(matched),
