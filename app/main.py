@@ -11,12 +11,18 @@ from app.models import resume as resume_model
 from app.models import job as job_model
 from app.models import interview as interview_model
 from app.models import user as user_model
-
+from sqlalchemy import text
+from app.database import engine
 settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    async with engine.begin() as conn:
+        await conn.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)"))
+        await conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)"))
+        await conn.execute(text("ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)"))
+    print("Migration done")
     print("Database initialized")
     yield
     print("Shutting down")

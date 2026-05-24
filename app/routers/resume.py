@@ -5,7 +5,9 @@ import os
 from uuid import UUID
 from app.database import get_db
 from app.models.resume import Resume
+from app.models.user import User
 from app.models.schemas import ResumeUploadResponse
+from app.services.auth_service import get_current_user
 from app.services.resume_parser import extract_text_from_pdf, parse_resume
 from app.services.embedding_service import store_resume_embedding, resume_collection
 from app.config import get_settings
@@ -16,7 +18,8 @@ settings = get_settings()
 @router.post("/upload", response_model=ResumeUploadResponse)
 async def upload_resume(
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
@@ -41,7 +44,8 @@ async def upload_resume(
         filename=file.filename,
         raw_text=raw_text,
         parsed_data=parsed_data,
-        ats_score=parsed_data.get("ats_score")
+        ats_score=parsed_data.get("ats_score"),
+        user_id=current_user.id
     )
     db.add(resume)
     await db.commit()
@@ -56,23 +60,30 @@ async def upload_resume(
             "ats_score": str(parsed_data.get("ats_score", 0))
         }
     )
-
     return resume
 
 @router.get("/")
 async def list_resumes(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(select(Resume))
-    resumes = result.scalars().all()
-    return resumes
+    result = await db.execute(
+        select(Resume).where(Resume.user_id == current_user.id)
+    )
+    return result.scalars().all()
 
 @router.get("/{resume_id}", response_model=ResumeUploadResponse)
 async def get_resume(
     resume_id: UUID,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(select(Resume).where(Resume.id == resume_id))
+    result = await db.execute(
+        select(Resume).where(
+            Resume.id == resume_id,
+            Resume.user_id == current_user.id
+        )
+    )
     resume = result.scalar_one_or_none()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")

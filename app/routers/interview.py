@@ -34,12 +34,22 @@ async def start_interview(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    resume_result = await db.execute(select(Resume).where(Resume.id == request.resume_id))
+    resume_result = await db.execute(
+        select(Resume).where(
+            Resume.id == request.resume_id,
+            Resume.user_id == current_user.id
+        )
+    )
     resume = resume_result.scalar_one_or_none()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
-    job_result = await db.execute(select(Job).where(Job.id == request.job_id))
+    job_result = await db.execute(
+        select(Job).where(
+            Job.id == request.job_id,
+            Job.user_id == current_user.id
+        )
+    )
     job = job_result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -59,7 +69,8 @@ async def start_interview(
         job_id=request.job_id,
         questions=questions,
         answers=[],
-        status="in_progress"
+        status="in_progress",
+        user_id=current_user.id
     )
     db.add(session)
     await db.commit()
@@ -87,7 +98,10 @@ async def submit_answer(
     current_user: User = Depends(get_current_user)
 ):
     session_result = await db.execute(
-        select(InterviewSession).where(InterviewSession.id == request.session_id)
+        select(InterviewSession).where(
+            InterviewSession.id == request.session_id,
+            InterviewSession.user_id == current_user.id
+        )
     )
     session = session_result.scalar_one_or_none()
     if not session:
@@ -143,7 +157,10 @@ async def complete_interview(
     current_user: User = Depends(get_current_user)
 ):
     session_result = await db.execute(
-        select(InterviewSession).where(InterviewSession.id == session_id)
+        select(InterviewSession).where(
+            InterviewSession.id == session_id,
+            InterviewSession.user_id == current_user.id
+        )
     )
     session = session_result.scalar_one_or_none()
     if not session:
@@ -202,7 +219,10 @@ async def get_report(
     current_user: User = Depends(get_current_user)
 ):
     session_result = await db.execute(
-        select(InterviewSession).where(InterviewSession.id == session_id)
+        select(InterviewSession).where(
+            InterviewSession.id == session_id,
+            InterviewSession.user_id == current_user.id
+        )
     )
     session = session_result.scalar_one_or_none()
     if not session:

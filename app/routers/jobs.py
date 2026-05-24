@@ -47,7 +47,8 @@ async def create_job(
         title=job_data.title,
         company=job_data.company,
         description=job_data.description,
-        required_skills=job_data.required_skills
+        required_skills=job_data.required_skills,
+        user_id=current_user.id
     )
     db.add(job)
     await db.commit()
@@ -70,9 +71,10 @@ async def list_jobs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(select(Job))
-    jobs = result.scalars().all()
-    return jobs
+    result = await db.execute(
+        select(Job).where(Job.user_id == current_user.id)
+    )
+    return result.scalars().all()
 
 @router.get("/match/{resume_id}")
 async def match_jobs(
@@ -80,7 +82,12 @@ async def match_jobs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(select(Resume).where(Resume.id == resume_id))
+    result = await db.execute(
+        select(Resume).where(
+            Resume.id == resume_id,
+            Resume.user_id == current_user.id
+        )
+    )
     resume = result.scalar_one_or_none()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
@@ -97,7 +104,9 @@ async def match_jobs(
             }
         )
 
-    all_jobs_result = await db.execute(select(Job))
+    all_jobs_result = await db.execute(
+        select(Job).where(Job.user_id == current_user.id)
+    )
     all_jobs = all_jobs_result.scalars().all()
     for job in all_jobs:
         existing_job = job_collection.get(ids=[str(job.id)], include=[])
@@ -127,12 +136,22 @@ async def skill_gap(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    resume_result = await db.execute(select(Resume).where(Resume.id == resume_id))
+    resume_result = await db.execute(
+        select(Resume).where(
+            Resume.id == resume_id,
+            Resume.user_id == current_user.id
+        )
+    )
     resume = resume_result.scalar_one_or_none()
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
-    job_result = await db.execute(select(Job).where(Job.id == job_id))
+    job_result = await db.execute(
+        select(Job).where(
+            Job.id == job_id,
+            Job.user_id == current_user.id
+        )
+    )
     job = job_result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
