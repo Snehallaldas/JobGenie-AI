@@ -45,7 +45,10 @@ async def start_interview(
         raise HTTPException(status_code=404, detail="Resume not found")
 
     job_result = await db.execute(
-        select(Job).where(Job.id == request.job_id)
+        select(Job).where(
+            Job.id == request.job_id,
+            Job.expires_at > datetime.utcnow()
+        )
     )
     job = job_result.scalar_one_or_none()
     if not job:

@@ -4,6 +4,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from uuid import UUID
 from typing import Optional
+from datetime import datetime
 import traceback
 from app.database import get_db
 from app.models.job import Job
@@ -33,6 +34,7 @@ class JobResponse(BaseModel):
     company: Optional[str]
     description: str
     required_skills: list
+    expires_at: datetime
 
     class Config:
         from_attributes = True
@@ -71,7 +73,7 @@ async def list_jobs(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(select(Job))  # all jobs, public
+    result = await db.execute(select(Job).where(Job.expires_at > datetime.utcnow()))
     return result.scalars().all()
 
 @router.get("/match/{resume_id}")
@@ -102,8 +104,10 @@ async def match_jobs(
             }
         )
 
-    all_jobs_result = await db.execute(select(Job))  # match against all jobs
+    all_jobs_result = await db.execute(select(Job).where(Job.expires_at > datetime.utcnow()))
     all_jobs = all_jobs_result.scalars().all()
+    active_job_ids = {str(job.id) for job in all_jobs}
+
     for job in all_jobs:
         existing_job = job_collection.get(ids=[str(job.id)], include=[])
         if not existing_job["ids"]:
@@ -118,10 +122,15 @@ async def match_jobs(
             )
 
     try:
-        matches = match_resume_to_job(str(resume_id))
+        matches = match_resume_to_job(str(resume_id), top_k=max(5, len(active_job_ids)))
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+    matches = [
+        match for match in matches
+        if match["job_id"] in active_job_ids
+    ][:5]
 
     return {"resume_id": str(resume_id), "matches": matches}
 
@@ -143,7 +152,10 @@ async def skill_gap(
         raise HTTPException(status_code=404, detail="Resume not found")
 
     job_result = await db.execute(
-        select(Job).where(Job.id == job_id)  # any job accessible
+        select(Job).where(
+            Job.id == job_id,
+            Job.expires_at > datetime.utcnow()
+        )
     )
     job = job_result.scalar_one_or_none()
     if not job:

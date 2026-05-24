@@ -21,6 +21,9 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.execute(text("ALTER TABLE resumes ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)"))
         await conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)"))
+        await conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP"))
+        await conn.execute(text("UPDATE jobs SET expires_at = created_at + INTERVAL '21 days' WHERE expires_at IS NULL"))
+        await conn.execute(text("ALTER TABLE jobs ALTER COLUMN expires_at SET NOT NULL"))
         await conn.execute(text("ALTER TABLE interview_sessions ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id)"))
     print("Migration done")
     print("Database initialized")
