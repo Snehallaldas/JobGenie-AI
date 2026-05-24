@@ -118,11 +118,15 @@ def build_score_card(answers: list[dict], total_questions: int) -> dict:
         for answer in safe_answers
     ]
 
+    # Ensure overall_score is safe before calculating percentage
+    safe_overall_score = _safe_score(overall_score)
+    score_percentage = round((safe_overall_score / 10) * 100, 2)
+
     return {
-        "overall_score": overall_score,
-        "score_percentage": round(overall_score * 10, 2),
-        "grade": _score_grade(overall_score),
-        "status": _score_status(overall_score),
+        "overall_score": safe_overall_score,
+        "score_percentage": score_percentage,
+        "grade": _score_grade(safe_overall_score),
+        "status": _score_status(safe_overall_score),
         "answered_questions": len(safe_answers),
         "total_questions": total_questions,
         "category_scores": category_scores,
