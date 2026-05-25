@@ -1,4 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import os
@@ -9,6 +10,7 @@ from app.models.user import User
 from app.models.schemas import ResumeUploadResponse
 from app.services.auth_service import get_current_user
 from app.services.resume_parser import extract_text_from_pdf, parse_resume
+from app.services.mistral_service import elaborate_resume
 from app.services.embedding_service import store_resume_embedding, resume_collection
 from app.config import get_settings
 
@@ -101,3 +103,44 @@ async def get_resume(
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
     return await refresh_resume_analysis(resume, db)
+
+@router.get("/{resume_id}/download")
+async def download_resume(
+    resume_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(Resume).where(
+            Resume.id == resume_id,
+            Resume.user_id == current_user.id
+        )
+    )
+    resume = result.scalar_one_or_none()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    
+    file_path = f"{settings.UPLOAD_DIR}/{resume.filename}"
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on server")
+        
+    return FileResponse(path=file_path, filename=resume.filename, media_type='application/pdf')
+
+@router.post("/{resume_id}/elaborate")
+async def elaborate_resume_endpoint(
+    resume_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(Resume).where(
+            Resume.id == resume_id,
+            Resume.user_id == current_user.id
+        )
+    )
+    resume = result.scalar_one_or_none()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+        
+    elaboration = elaborate_resume(resume.raw_text or "")
+    return {"elaboration": elaboration}

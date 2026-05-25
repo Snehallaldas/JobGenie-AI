@@ -163,7 +163,6 @@ def build_score_card(answers: list[dict], total_questions: int) -> dict:
 class StartInterviewRequest(BaseModel):
     resume_id: UUID
     job_id: UUID
-    num_questions: int = 5
 
 class SubmitAnswerRequest(BaseModel):
     session_id: UUID
@@ -200,8 +199,7 @@ async def start_interview(
         questions = generate_questions(
             resume_text=resume.raw_text,
             job_title=job.title,
-            job_description=job.description,
-            num_questions=request.num_questions
+            job_description=job.description
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Question generation failed: {str(e)}")

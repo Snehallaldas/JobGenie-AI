@@ -104,12 +104,11 @@ def _complete_chat(model: str, prompt: str) -> str:
 def generate_questions(
     resume_text: str,
     job_title: str,
-    job_description: str,
-    num_questions: int = 5
+    job_description: str
 ) -> list[dict]:
     """Generate interview questions based on resume and job description."""
 
-    prompt = f"""You are an expert technical interviewer. Based on the resume and job description below, generate {num_questions} interview questions.
+    prompt = f"""You are an expert technical interviewer. Based on the resume and job description below, generate an appropriate number of interview questions as you see fit.
 
 RESUME:
 {resume_text[:2000]}
@@ -357,3 +356,19 @@ Generate a comprehensive report and respond ONLY with JSON:
         parsed["learning_resources"] = []
 
     return parsed
+
+def elaborate_resume(resume_text: str) -> str:
+    """Generate a detailed elaboration/summary of the resume."""
+    prompt = f"""You are an expert career counselor. Please provide a detailed elaboration and professional summary of the following resume. Highlight the candidate's core strengths, major achievements, and the type of roles they are best suited for. Keep the tone encouraging and professional.
+
+RESUME:
+{resume_text[:4000]}
+
+Respond ONLY with the elaboration text. Do not include any JSON or markdown formatting other than basic paragraphs.
+"""
+    try:
+        content = _complete_chat(settings.MISTRAL_LARGE_MODEL, prompt)
+        return content.strip()
+    except Exception as e:
+        return "Unable to elaborate on the resume at this time due to an error."
+
